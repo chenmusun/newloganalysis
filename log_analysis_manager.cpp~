@@ -1,0 +1,141 @@
+#include"log_analysis_manager.h"
+LogAnalysisManager(int thread_num):pool_(thread_num)
+{
+
+}
+
+
+void LogAnalysisManager::Run()
+{
+        std::thread recv_thread(LogAnalysisManager::RecvLogInfo,this);
+        std::thread pick_thread(LogAnalysisManager::PickLogInfo,this);
+        std::thread handle_thread(LogAnalysisManager::HandleLogInfo,this);
+        std::thread scan_thread(LogAnalysisManager::ScanLogAnalysisFinished,this);
+        recv_thread.join();
+        pick_thread.join();
+        handle_thread.join();
+        scan_thread.join();
+}
+
+bool LogAnalysisManager::init(const std::string& addr){
+        bool ret=true;
+        requester_.connect(addr);//"tcp://localhost:5673"
+        s_send(requester_,WORKER_REQUEST);
+        std::string worker=s_recv(requester_);
+        if(worker!=BROKER_REPLY){
+                ret=false;
+        }
+        return ret;
+}
+
+void LogAnalysisManager::RecvLogInfo(LogAnalysisManager * lam){
+                zmq::pollitem_t items[]={
+                        // Always poll for worker activity on backend
+                        { (void *)lam->requester_, 0, ZMQ_POLLIN, 0 },
+                };
+                while (1) {
+                        zmq::poll(&items[0], 1, -1);
+                        //  Handle worker activity on backend
+                        if (items[0].revents & ZMQ_POLLIN) {
+                                std::string log_name=s_recv(lam->requester_);
+                                std::string data=s_recv(lam->requester_);
+                                {
+                                        std::lock_guard<std::mutex>  lock(lam->log_queue_mutex_);
+                                        lam->log_info_queue_.push(log_name);
+                                        lam->log_info_queue_.push(data);
+                                /* } */
+
+                                /* { */
+                                /*         std::lock_guard<std::mutex> lock(queue_cv_mutex_); */
+                                        lam->log_queue_cv_.notify_all();
+                                }
+
+                        }
+                }
+
+ }
+void LogAnalysisManager::PickLogInfo(LogAnalysisManager * lam){
+                while(1){
+                        std::unique_lock<std::mutex> lock(lam->log_queue_mutex_);
+                        lam->log_queue_cv_.wait(lock,[lam]{return !lam->log_info_queue_.empty();});
+                        std::string log_name=lam->log_info_queue_.front();
+                        lam->log_info_queue_.pop();
+                        std::string data=lam->log_info_queue_.front();
+                        lam->log_info_queue_.pop();
+                        lock.unlock();
+                        {
+                                std::lock_guard<std::mutex>  lock(lam->log_map_mutex_);
+                                auto pos=lam->log_analysis_map_.find(log_name);
+                                if(pos!=lam->log_analysis_map_.end()){
+                                        (*pos)->PushLogInfo(data);
+                                }
+                                else {
+                                        LogAnalysis * pla=new LogAnalysis();
+                                        //TODO
+                                        char path[256]={0};
+                                        sprintf(path,"./save/%s",log_name.c_str());
+                                        pla->fd_=open(path,O_WRONLY|O_APPEND|O_CREAT,S_IWUSR|S_IRUSR);
+                                        //
+                                        // log_map.insert(std::make_pair(log_name,fd));
+                                        if( write(pla->fd_,data.c_str(),data.length())==-1)
+                                                std::cout << "write data error" << "\n";
+                                        lam->log_analysis_map_.insert(std::make_pair(log_name,pla));
+                                        //将新增对象放到就绪队列中并通知
+                                        std::lock_guard<std::mutex>  lock(lam->log_analysis_queue_mutex_);
+                                        lam->log_analysis_queue_.push(pla);
+                                        lam->log_analysis_queue_cv_.notify_all();
+                                }
+                        }
+
+
+                }
+}
+void LogAnalysisManager::HandleLogInfo(LogAnalysisManager * lam){
+        std::unique_lock<std::mutex> lock(lam->log_analysis_queue_mutex_);
+        lam->log_analysis_queue_cv_.wait(lock,[lam]{return !lam->log_analysis_queue_.empty();});
+        LogAnalysis * pla=lam->log_analysis_queue_.front();
+        lam->log_analysis_queue_.pop();
+        lock.unlock();
+        //TODO此处用线程池开始调用
+        lam->pool_.enqueue(LogAnalysisManager::AnalyseLogInfo,pla);
+}
+
+void LogAnalysisManager::AnalyseLogInfo(LogAnalysis * pla,LogAnalysisManager * lam){
+        if(pla->GetLogStatus()==HANDLED){
+                std::lock_guard<std::mutex>  lock(lam->log_handled_queue_mutex_);
+                lam->log_handled_queue_.push(pla);
+                lam->log_handled_queue_cv_.notify_all();
+        }
+        else {
+                std::string data=pla->PopLogInfo();
+                if(!data.empty()){
+                        if( write(pla->fd_,data.c_str(),data.length())==-1)
+                                std::cout << "write data error" << "\n";
+                }
+
+                //put object back to ready queue
+                {
+                        std::lock_guard<std::mutex>  lock(lam->log_analysis_queue_mutex_);
+                        lam->log_analysis_queue_.push(pla);
+                        lam->log_analysis_queue_cv_.notify_all();
+                }
+        }
+
+ }
+
+void LogAnalysisManager::ScanLogAnalysisFinished(LogAnalysisManager * lam){
+        std::unique_lock<std::mutex> lock(lam->log_handled_queue_mutex_);
+        lam->log_handled_queue_cv_.wait(lock,[]{return !lam->log_handled_queue_.empty();});
+        LogAnalysis * pla=lam->log_handled_queue_.front();
+        lam->log_handled_queue_.pop();
+        lock.unlock();
+        {
+                std::lock_guard<std::mutex>  lock(lam->log_map_mutex_);
+                auto pos=lam->log_analysis_map_.find(pla->log_name);
+                if(pos!=lam->log_analysis_map_.end()){
+                        delete pos->second;
+                        lam->log_analysis_map_.erase(pos);
+                }
+
+        }
+}
