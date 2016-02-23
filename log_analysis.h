@@ -11,6 +11,11 @@
 #define ELPP_THREAD_SAFE
 #include"easylogging++.h"
 //#include"lteieeventcommon.h"
+//TODO
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 using  std::map;
 using  std::string;
@@ -82,6 +87,7 @@ std::string PopLogInfo();
 void WriteToFile(const std::string& str);//TODO
 LogStatus GetLogStatus();
 void SetLogStatus(LogStatus ls);
+void AnalyseMultiLines(const std::string& mline);
 int fd_;//TODO
 std::string log_name_;//日志名
 time_t time_no_data_;
@@ -91,9 +97,9 @@ std::mutex queue_mutex_;
 std::mutex log_status_mutex_;
 LogStatus log_status_;
 std::string SplitFirstString(const string& str_source,char sep);//截取第一个substring
-static  void SplitStrings(const string& str_source,char sep,vector<string>& vec,bool erase=true);//截取所有substring
+static  void SplitStrings(const string& str_source,char sep,vector<string>& vec,bool erase=false);//截取所有substring
 LogTime time_;
-
+std::string string_remain_;
 //DECLARE_DATA_PROC(StartFlag);
 //static  void  GenerateIE(const string& ie_str,map<int,long> & ie_map);//明文IE
 //static  void GenerateEvent(const string& event_str,vector<int>& event_vec);//明文事件

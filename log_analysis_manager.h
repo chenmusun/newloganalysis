@@ -3,9 +3,7 @@
 #include"log_analysis.h"
 #include"zhelpers.hpp"
 //add open function
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+
 
 const std::string HAS_NO_WORKER= "HASNOWORKER";
 const std::string CLIENT_REQUEST= "CLIENTREQUEST";
@@ -22,7 +20,8 @@ public:
         static  void HandleLogInfo(LogAnalysisManager * lam);
         static  void AnalyseLogInfo(LogAnalysis * pla,LogAnalysisManager * lam);
         static  void ScanLogAnalysisFinished(LogAnalysisManager * lam);
-        static  void ScanLogAnalysisOvertime(LogAnalysisManager * lam);
+ //       static  void ScanLogAnalysisOvertime2(LogAnalysisManager * lam);
+	  static  void ScanLogAnalysisOvertime(LogAnalysisManager * lam);
         /* void LogDataHandle(); */
         std::queue<std::string> log_info_queue_;//初始日志队列
         std::mutex log_queue_mutex_;
@@ -37,6 +36,10 @@ public:
         std::queue<LogAnalysis *> log_handled_queue_;//完成处理对象队列
         std::condition_variable log_handled_queue_cv_;
         std::mutex log_handled_queue_mutex_;
+	//overtime queue
+	  std::queue<LogAnalysis *> log_overtime_queue_;//overtime处理对象队列
+        std::condition_variable log_overtime_queue_cv_;
+        std::mutex log_overtime_queue_mutex_;
         //overtime object map
         std::map<std::string,LogAnalysis *> log_analysis_overtime_map_;
         std::mutex overtime_map_mutex_;

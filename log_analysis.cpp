@@ -55,18 +55,50 @@ LogAnalysis::~LogAnalysis()
 
 void LogAnalysis::AnalyseOneLine(const string& line)
 {
-	string head=SplitFirstString(line,'\t');
-	KeywordProc kp;
-        kp.keyword=head;
+  string head=SplitFirstString(line,'\t');
+  KeywordProc kp;
+  kp.keyword=head;
 
-	auto pos=keyword_proc_set_.find(kp);
-	//if((set<KeywordProc>::iterator pos=))
-	if(pos!=keyword_proc_set_.end())
-	{
+/*  auto pos=keyword_proc_set_.find(kp);
+  //if((set<KeywordProc>::iterator pos=))
+  if(pos!=keyword_proc_set_.end())
+  {
 //		if(start_analysis_||(pos->keyword=="LAB"))
-			pos->proc(line,this);
-        }
+    pos->proc(line,this);
+  }*/
+ //  line+="\n";
+   std::string str=line;
+   str+='\n';
+   if(!str.empty()){
+     if( write(fd_,str.c_str(),str.length())==-1)
+                   LOG(ERROR)<< "write data error";
+   }
+}
 
+void LogAnalysis::AnalyseMultiLines(const std::string& mline)
+{
+  std::vector<string> vec;
+  SplitStrings(mline,'\n',vec,false);
+  // if(!string_remain_.empty())
+  // {
+  int vec_size=vec.size();
+  for(int i=0;i<vec_size;++i){
+    if(i==0){
+      string_remain_+=vec[0];
+      AnalyseOneLine(string_remain_);
+    }
+    else{
+      if(i==vec_size-1){
+        if(vec[i].back()!='\n'){
+          string_remain_=vec[i];
+          continue;
+        }
+      }
+
+      AnalyseOneLine(vec[i]);
+
+    }
+  }
 }
 
 string LogAnalysis::SplitFirstString(const string& str_source,char sep)
@@ -236,6 +268,10 @@ void LogAnalysis::GenerateIEEvent(const string& ie_event,void *arg)
 void LogAnalysis::PushLogInfo(std::string& str){
   std::lock_guard<std::mutex>  lock(queue_mutex_);
   log_info_queue_.push(str);
+//   if(str=="EOF")
+//	SetLogStatus(HANDLED);
+//   if(str=="OVERTIME")
+//	SetLogStatus(OVERTIME);
 }
 std::string LogAnalysis::PopLogInfo(){
   std::string ret;
@@ -245,14 +281,18 @@ std::string LogAnalysis::PopLogInfo(){
       if(!log_info_queue_.empty()){
         ret=log_info_queue_.front();
         log_info_queue_.pop();
-        time_no_data_=0;
+ //       time_no_data_=0;
+	   if(ret=="EOF")
+		SetLogStatus(HANDLED);
+   	   else if(ret=="OVERTIME")
+   		SetLogStatus(OVERTIME);
         break;
       }
     }
 
-    time_no_data_=time(0);
-    LOG(INFO)<<"SetLogStatus";
-    SetLogStatus(OVERTIME);
+    //time_no_data_=time(0);
+    // LOG(INFO)<<"SetLogStatus";
+    //SetLogStatus(OVERTIME);
       // time_t nowtime=time(0);
       // if(time_no_data_){
       //   if(nowtime-time_no_data_>60)

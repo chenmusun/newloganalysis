@@ -81,21 +81,21 @@ void LogAnalysisManager::PickLogInfo(LogAnalysisManager * lam){
                                 (pos->second)->PushLogInfo(data);
                                 //judge if the object now is in the overtime map
                                 if((pos->second)->GetLogStatus()==OVERTIME){
-                                        LOG(INFO)<<"wakeup the overtime object from overtime map";
+                                        // LOG(INFO)<<"wakeup the overtime object from overtime map";
                                         (pos->second)->SetLogStatus(READY);
                                         {
                                                 std::lock_guard<std::mutex>  lock(lam->log_analysis_queue_mutex_);
-                                                LOG(INFO)<<"PickLogInfo add non-overtime log_analysis object into log_analysis_queue";
+                                                // LOG(INFO)<<"PickLogInfo add non-overtime log_analysis object into log_analysis_queue";
                                                 lam->log_analysis_queue_.push(pos->second);
                                                 lam->log_analysis_queue_cv_.notify_all();
                                         }
-                                        std::lock_guard<std::mutex>  lock(lam->overtime_map_mutex_);
+       						/* std::lock_guard<std::mutex>  lock(lam->overtime_map_mutex_);
                                         auto pos_del=lam->log_analysis_overtime_map_.find(log_name);
                                         if(pos_del!=lam->log_analysis_overtime_map_.end())
                                                 lam->log_analysis_overtime_map_.erase(pos_del);
                                         else{
-                                                LOG(ERROR)<<"can't find object in overtime map";
-                                        }
+                                                LOG(ERROR)<<"can't find object in overtime map";*/
+                                       // }
 
                                 }
 
@@ -116,7 +116,7 @@ void LogAnalysisManager::PickLogInfo(LogAnalysisManager * lam){
                                 lam->log_analysis_map_.insert(std::make_pair(log_name,pla));
                                 //将新增对象放到就绪队列中并通知
                                 std::lock_guard<std::mutex>  lock(lam->log_analysis_queue_mutex_);
-                                LOG(INFO)<<"PickLogInfo add new log_analysis object into log_analysis_queue";
+                                // LOG(INFO)<<"PickLogInfo add new log_analysis object into log_analysis_queue";
                                 lam->log_analysis_queue_.push(pla);
                                 lam->log_analysis_queue_cv_.notify_all();
                         }
@@ -143,6 +143,7 @@ void LogAnalysisManager::HandleLogInfo(LogAnalysisManager * lam){
 
 void LogAnalysisManager::AnalyseLogInfo(LogAnalysis * pla,LogAnalysisManager * lam){
         LOG(INFO)<<"AnalyseLogInfo thread start";
+	  std::string data=pla->PopLogInfo();//获取数据判断状态
         LogStatus ls=pla->GetLogStatus();
         if(ls==HANDLED){
                 LOG(INFO)<<"AnalyseLogInfo put handled object into log_handled_queue";
@@ -152,22 +153,27 @@ void LogAnalysisManager::AnalyseLogInfo(LogAnalysis * pla,LogAnalysisManager * l
         }
         else if(ls==OVERTIME) {
                 LOG(INFO)<<"AnalyseLogInfo put handled object into overtime_map";
-                std::lock_guard<std::mutex>  lock(lam->overtime_map_mutex_);
-                lam->log_analysis_overtime_map_.insert(std::make_pair(pla->log_name_,pla));
-                lam->overtime_map_cv_.notify_all();
+       //         std::lock_guard<std::mutex>  lock(lam->overtime_map_mutex_);
+        //        lam->log_analysis_overtime_map_.insert(std::make_pair(pla->log_name_,pla));
+        //        lam->overtime_map_cv_.notify_all();
+	   	   std::lock_guard<std::mutex>  lock(lam->log_overtime_queue_mutex_);
+                lam->log_overtime_queue_.push(pla);
+                lam->log_overtime_queue_cv_.notify_all();
         }
         else {
-                LOG(INFO)<<"AnalyseLogInfo handle data";
-                std::string data=pla->PopLogInfo();
-                if(!data.empty()){
-                        if( write(pla->fd_,data.c_str(),data.length())==-1)
-                                std::cout << "write data error" << "\n";
-                }
+                // LOG(INFO)<<"AnalyseLogInfo handle data";
+ 
+                if(!data.empty())
+                        pla->AnalyseMultiLines(data);
+                // if(!data.empty()){
+                //         if( write(pla->fd_,data.c_str(),data.length())==-1)
+                //                 std::cout << "write data error" << "\n";
+                // }
 
                 //put object back to ready queue
                 {
                         std::lock_guard<std::mutex>  lock(lam->log_analysis_queue_mutex_);
-                        LOG(INFO)<<"AnalyseLogInfo thread put log_analysis object back into log_analysis_queue";
+                        // LOG(INFO)<<"AnalyseLogInfo thread put log_analysis object back into log_analysis_queue";
                         lam->log_analysis_queue_.push(pla);
                         lam->log_analysis_queue_cv_.notify_all();
                 }
@@ -176,7 +182,8 @@ void LogAnalysisManager::AnalyseLogInfo(LogAnalysis * pla,LogAnalysisManager * l
  }
 
 void LogAnalysisManager::ScanLogAnalysisFinished(LogAnalysisManager * lam){
-        LOG(INFO)<<"ScanLogAnalysisFinished thread start";
+	while(1){
+ //       LOG(ERROR)<<"ScanLogAnalysisFinished thread start";
         std::unique_lock<std::mutex> lock(lam->log_handled_queue_mutex_);
         lam->log_handled_queue_cv_.wait(lock,[lam]{return !lam->log_handled_queue_.empty();});
         // LOG(INFO)<<"ScanLogAnalysisFinished thread get log_analysis from log_handled_queue";
@@ -185,40 +192,65 @@ void LogAnalysisManager::ScanLogAnalysisFinished(LogAnalysisManager * lam){
         lock.unlock();
         {
                 std::lock_guard<std::mutex>  lock(lam->log_map_mutex_);
-                LOG(INFO)<<"ScanLogAnalysisFinished thread erase handled log_analysis object from log_analysis_map "<<pla->log_name_;
-                auto pos=lam->log_analysis_map_.find(pla->log_name_);
+                 auto pos=lam->log_analysis_map_.find(pla->log_name_);
                 if(pos!=lam->log_analysis_map_.end()){
+               LOG(ERROR)<<"ScanLogAnalysisFinished thread erase handled log_analysis object from log_analysis_map "<<pla->log_name_;
                         delete pos->second;
                         lam->log_analysis_map_.erase(pos);
                 }
 
         }
+	}
+
 }
 
 
-void LogAnalysisManager::ScanLogAnalysisOvertime(LogAnalysisManager * lam){
+/*void LogAnalysisManager::ScanLogAnalysisOvertime2(LogAnalysisManager * lam){
         LOG(INFO)<<"ScanLogAnalysisOvertime thread start";
         while(1){
                 std::unique_lock<std::mutex> lock(lam->overtime_map_mutex_);
                 lam->overtime_map_cv_.wait(lock,[lam]{return !lam->log_analysis_overtime_map_.empty();});
-                time_t nowtime=time(0);
+                //time_t nowtime=time(0);
                 LOG(INFO)<<"ScanLogAnalysisOvertime thread start scaning";
                 for(auto pos=lam->log_analysis_overtime_map_.begin();pos!=lam->log_analysis_overtime_map_.end();++pos){
-                        time_t timespan=nowtime-(pos->second)->time_no_data_;
-                        if(timespan>=MAX_OVERTIME){
+                        //time_t timespan=nowtime-(pos->second)->time_no_data_;
+                       // if(timespan>=MAX_OVERTIME){
                                 std::lock_guard<std::mutex>  lock(lam->log_map_mutex_);
-                                LOG(INFO)<<"Overtime thread erase  object from log_analysis_map "<<pos->first<<" add timespan is "<<timespan;
+                                LOG(ERROR)<<"Overtime thread erase  object from log_analysis_map "<<pos->first;//<<" add timespan is "<<timespan;
                                 auto pos_del=lam->log_analysis_map_.find(pos->first);
                                 if(pos_del!=lam->log_analysis_map_.end()){
                                         delete pos_del->second;
                                         lam->log_analysis_map_.erase(pos_del);
-                                }
+                              		  }
                                 lam->log_analysis_overtime_map_.erase(pos);
 
-                        }
+                       // }
 
                 }
                 lock.unlock();
-                sleep(MAX_OVERTIME);
+//                sleep(MAX_OVERTIME);
         }
+}*/
+
+void LogAnalysisManager::ScanLogAnalysisOvertime(LogAnalysisManager * lam){
+	while(1){
+        std::unique_lock<std::mutex> lock(lam->log_overtime_queue_mutex_);
+        lam->log_overtime_queue_cv_.wait(lock,[lam]{return !lam->log_overtime_queue_.empty();});
+        // LOG(ERROR)<<"ScanLogAnalysisFinished thread get log_analysis from log_handled_queue";
+        LogAnalysis * pla=lam->log_overtime_queue_.front();
+        lam->log_overtime_queue_.pop();
+        lock.unlock();
+        {
+                std::lock_guard<std::mutex>  lock(lam->log_map_mutex_);
+   
+                auto pos=lam->log_analysis_map_.find(pla->log_name_);
+                if(pos!=lam->log_analysis_map_.end()){
+			 LOG(ERROR)<<"ScanLogAnalysisOvertime thread erase handled log_analysis object from log_analysis_map "<<pla->log_name_;
+                   delete pos->second;
+                   lam->log_analysis_map_.erase(pos); 
+                }
+
+        }
+	}
+
 }
